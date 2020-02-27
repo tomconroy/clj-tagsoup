@@ -8,7 +8,8 @@
            (javax.xml.stream XMLEventReader XMLStreamConstants)
            (javax.xml.stream.events Attribute StartElement XMLEvent)
            (javanet.staxutils ContentHandlerToXMLEventWriter XMLEventPipe)
-           (org.xml.sax Attributes InputSource)))
+           (org.xml.sax Attributes InputSource)
+           (org.xml.sax.ext LexicalHandler)))
 
 (defn- attributes-map
   "Converts an Attributes object into a Clojure map,"
@@ -113,7 +114,8 @@ makes the resulting tree cleaner. If prefer-header-http-info is true
 and the encoding is specified in both <meta http-equiv> tag and the
 HTTP headers (in this case, input must be a URL or a string
 representing one), the latter is preferred."
-  [input & {:keys [xml strip-whitespace prefer-header-http-info], :or {strip-whitespace true}}]
+  [input & {:keys [xml strip-whitespace prefer-header-http-info lexical]
+            :or {strip-whitespace true}}]
   (with-local-vars [tree (zip/vector-zip []) pcdata "" reparse false]
     (let [{:keys [stream encoding]} (input-stream input)
           stream (BufferedInputStream. stream)
@@ -153,7 +155,18 @@ representing one), the latter is preferred."
                                          (zip/append-child attrs)))))
                    (endElement [uri localname qname]
                      (flush-pcdata)
-                     (var-set tree (-> tree var-get zip/up))))]
+                     (var-set tree (-> tree var-get zip/up))))
+          lexical-handler (proxy [LexicalHandler] []
+                            (comment [buf offset length]
+                                     (let [comment-string (str "<!--"
+                                                               (String. buf offset length)
+                                                               "-->")]
+                                       (var-set tree
+                                                (-> tree var-get
+                                                    (zip/append-child comment-string))))))
+          _ (when lexical (.setProperty parser
+                                        Parser/lexicalHandlerProperty
+                                        lexical-handler))]
       (try
        (.parse parser source)
        (catch Exception e
